@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recuperador de Excel</title>
+    <style>
+        :root {
+            --primary: #107c41; /* Excel Green */
+            --surface: #ffffff;
+            --bg: #f3f4f6;
+            --text: #1f2937;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 480px;
+            text-align: center;
+        }
+        h1 { margin-bottom: 0.5rem; color: var(--primary); }
+        p { color: #6b7280; margin-bottom: 1.5rem; }
+        
+        .drop-zone {
+            border: 2px dashed #d1d5db;
+            border-radius: 8px;
+            padding: 2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #f9fafb;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--primary);
+            background: #f0fdf4;
+        }
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 1rem;
+            font-size: 1rem;
+            transition: opacity 0.2s;
+        }
+        .btn:disabled { opacity: 0.7; cursor: not-allowed; }
+        
+        .hidden { display: none; }
+        
+        .status-box {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            border-radius: 6px;
+            text-align: left;
+            font-size: 0.9rem;
+        }
+        .error { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+        .success { background-color: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+        
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.8s linear infinite;
+            margin-right: 0.5rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .btn-link {
+            background: none;
+            border: none;
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: underline;
+            padding: 0;
+            font-size: 0.9rem;
+            display: inline-block;
+            margin-top: 0.5rem;
+        }
+        .password-input {
+            width: 100%;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Recuperador de Excel</h1>
+    <p>Remova senhas, estilos e recupere dados brutos.</p>
+
+    <form id="uploadForm">
+        <div class="drop-zone" id="dropZone">
+            <span style="font-size: 2rem;">📂</span>
+            <div id="fileName">Arraste seu arquivo aqui ou clique para selecionar</div>
+            <input type="file" id="fileInput" name="file" accept=".xlsx, .xls" class="hidden" required>
+        </div>
+
+        <div style="text-align: left;">
+            <button type="button" class="btn-link" id="togglePassword">🔐 O arquivo tem senha?</button>
+            <input type="password" id="passwordInput" name="password" class="password-input hidden" placeholder="Digite a senha para desbloquear e remover a proteção">
+        </div>
+
+        <button type="submit" class="btn" id="submitBtn">Recuperar Arquivo</button>
+    </form>
+
+    <div id="statusMessage" class="status-box hidden"></div>
+</div>
+
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileNameDisplay = document.getElementById('fileName');
+    const form = document.getElementById('uploadForm');
+    const btn = document.getElementById('submitBtn');
+    const statusMsg = document.getElementById('statusMessage');
+    const togglePasswordBtn = document.getElementById('togglePassword');
+    const passwordInput = document.getElementById('passwordInput');
+
+    togglePasswordBtn.addEventListener('click', () => {
+        passwordInput.classList.toggle('hidden');
+        if (!passwordInput.classList.contains('hidden')) {
+            passwordInput.focus();
+        }
+    });
+
+    // Drag & Drop UI
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            handleFiles(fileInput.files);
+        }
+    });
+
+    fileInput.addEventListener('change', () => {
+        handleFiles(fileInput.files);
+    });
+
+    function handleFiles(files) {
+        if (files.length > 0) {
+            const file = files[0];
+            const maxSize = 25 * 1024 * 1024;
+            
+            if (file.size > maxSize) {
+                alert('A ferramenta gratuita suporta apenas planilhas de até 25MB.');
+                fileInput.value = '';
+                fileNameDisplay.textContent = 'Arraste seu arquivo aqui ou clique para selecionar';
+                fileNameDisplay.style.fontWeight = 'normal';
+                return;
+            }
+            
+            fileNameDisplay.textContent = file.name;
+            fileNameDisplay.style.fontWeight = 'bold';
+        }
+    }
+
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!fileInput.files.length) return;
+
+       
+        btn.disabled = true;
+        btn.innerHTML = '<div class="spinner"></div> Processando...';
+        statusMsg.classList.add('hidden');
+        statusMsg.className = 'status-box hidden';
+
+        const formData = new FormData(form);
+
+        try {
+            const response = await fetch('/recover', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || 'Erro desconhecido no servidor');
+            }
+
+            
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = `recuperado_${fileInput.files[0].name}`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            
+            const rows = response.headers.get('X-Recovery-Rows') || '?';
+            const sheets = response.headers.get('X-Recovery-Sheets') || '?';
+            const isTruncated = response.headers.get('X-Recovery-Truncated') === 'true';
+
+            let message = `✅ Sucesso! ${rows} linhas recuperadas em ${sheets} abas.`;
+            if (isTruncated) {
+                message += " ⚠️ O arquivo foi cortado por conter dados corrompidos excessivos.";
+            }
+            statusMsg.textContent = message + " O download começou.";
+            statusMsg.classList.add('success');
+            statusMsg.classList.remove('hidden');
+
+        } catch (error) {
+            let msg = error.message;
+            if (msg === 'Failed to fetch') {
+                msg = window.location.protocol === 'file:' 
+                    ? 'Você abriu o arquivo direto. Acesse http://localhost:3000 no navegador.'
+                    : 'O servidor caiu ou não está rodando. Verifique o terminal.';
+            }
+            statusMsg.textContent = `❌ Erro: ${msg}`;
+            statusMsg.classList.add('error');
+            statusMsg.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Recuperar Arquivo';
+        }
+    });
+</script>
+
+</body>
+</html>
