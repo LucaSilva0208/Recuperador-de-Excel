@@ -4,6 +4,7 @@ const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 
 
 
@@ -71,7 +72,7 @@ class ExcelRecoveryService {
         }
         return cell;
     }
-    async recoverFile(inputPath, outputPath, password) {
+    async recoverFile(inputPath, outputPath, password, duplicateAction = 'ask') {
         try {
             console.log(`Lendo arquivo em formato Stream via ExcelJS...`);
             
@@ -93,6 +94,9 @@ class ExcelRecoveryService {
             for await (const worksheetReader of workbookReader) {
                 stats.sheets++;
                 console.log(`Processando aba: ${worksheetReader.name}`);
+                
+                const seenRows = new Set();
+                let targetRowNumber = 1;
                 
                 
                 const sheetOptions = {};
@@ -117,8 +121,30 @@ class ExcelRecoveryService {
                 }
                 
                 for await (const row of worksheetReader) {
+                    let rowValues = [];
+                    let hasData = false;
+
+                    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                        const val = this._sanitizeCell(cell.value);
+                        rowValues[colNumber] = val;
+                        if (val !== null && val !== undefined && val !== '') hasData = true;
+                    });
                     
-                    const newRow = worksheetWriter.getRow(row.number);
+                    if (hasData) {
+                        const rowString = JSON.stringify(rowValues);
+                        const rowHash = crypto.createHash('md5').update(rowString).digest('hex');
+                        
+                        if (seenRows.has(rowHash)) {
+                            if (duplicateAction === 'ask') {
+                                throw new Error("DUPLICATES_FOUND");
+                            } else if (duplicateAction === 'remove') {
+                                continue; // Pula a escrita desta linha (remove a duplicata)
+                            }
+                        }
+                        seenRows.add(rowHash);
+                    }
+                    
+                    const newRow = worksheetWriter.getRow(duplicateAction === 'remove' ? targetRowNumber : row.number);
                     
                     
                     if (row.height) newRow.height = row.height;
@@ -133,6 +159,7 @@ class ExcelRecoveryService {
                     
                     newRow.commit();
                     stats.totalRows++;
+                    targetRowNumber++;
                 }
                 
                 
@@ -174,11 +201,12 @@ class RecoveryController {
         const outputFilename = `recovered_${path.basename(req.file.path)}`;
         const outputPath = path.join(this.fileManager.recoveryDir, outputFilename);
         const password = req.body.password; // Captura a senha do formulário
+        const duplicateAction = req.body.duplicateAction || 'ask'; // 'ask', 'keep', 'remove'
 
-        console.log(`Processando: ${req.file.originalname}`);
+        console.log(`Processando: ${req.file.originalname} | DuplicateAction: ${duplicateAction}`);
 
         try {
-            const result = await this.service.recoverFile(inputPath, outputPath, password);
+            const result = await this.service.recoverFile(inputPath, outputPath, password, duplicateAction);
             
            
             res.set('X-Recovery-Sheets', result.stats.sheets);
@@ -195,6 +223,12 @@ class RecoveryController {
                 fs.unlink(result.outputPath, () => {});
             });
         } catch (error) {
+            if (error.message === "DUPLICATES_FOUND") {
+                return res.status(409).json({ 
+                    error: 'DUPLICATES_FOUND', 
+                    message: 'O arquivo contém informações duplicadas. É necessário manter as cópias?' 
+                });
+            }
             if (error.message.includes("senha")) {
                 return res.status(422).json({ error: error.message });
             }
